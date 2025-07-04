@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text-to-SQL Generator</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Text-to-SQL Generator</h1>
+        <h2>Загрузить Database Schema (JSON)</h2>
+        <form id="schema-form" enctype="multipart/form-data">
+            <input type="file" name="schema_file" accept=".json" required>
+            <button type="submit">Загрузить Schema</button>
+        </form>
+        <h2>Введите запрос</h2>
+        <form id="query-form">
+            <textarea name="query" placeholder="e.g., Find all customers older than 25" required></textarea>
+            <button type="submit">Сгенирировать SQL</button>
+        </form>
+        <div id="result">
+            <h2>Сгенирированный SQL запрос</h2>
+            <pre id="sql-output"></pre>
+        </div>
+        <div id="error"></div>
+    </div>
+    <script>
+        document.getElementById("schema-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const response = await fetch("/", {
+                method: "POST",
+                body: formData
+            });
+            const result = await response.json();
+            if (result.status) {
+                alert(result.status);
+            } else {
+                document.getElementById("error").innerText = result.error;
+            }
+        });
+
+        document.getElementById("query-form").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const response = await fetch("/", {
+                method: "POST",
+                body: formData
+            });
+            const result = await response.json();
+            if (result.sql_query) {
+                document.getElementById("sql-output").innerText = result.sql_query;
+                document.getElementById("error").innerText = "";
+            } else {
+                document.getElementById("error").innerText = result.error;
+            }
+        });
+    </script>
+</body>
+</html>
