@@ -3,25 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Text-to-SQL Generator</title>
+    <title>Text-to-SQL Generator 1.0</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div class="container">
         <h1>Text-to-SQL Generator</h1>
-        <h2>Загрузить Database Schema (JSON)</h2>
+        <h2>Upload Database Schema (JSON)</h2>
         <form id="schema-form" enctype="multipart/form-data">
             <input type="file" name="schema_file" accept=".json" required>
-            <button type="submit">Загрузить Schema</button>
+            <button type="submit">Upload Schema</button>
         </form>
-        <h2>Введите запрос</h2>
+        <h2>Enter Natural Language Query</h2>
         <form id="query-form">
             <textarea name="query" placeholder="e.g., Find all customers older than 25" required></textarea>
-            <button type="submit">Сгенирировать SQL</button>
+            <button type="submit">Generate SQL</button>
         </form>
         <div id="result">
-            <h2>Сгенирированный SQL запрос</h2>
+            <h2>Generated SQL Query</h2>
             <pre id="sql-output"></pre>
+            <h2>API Response</h2>
+            <pre id="api-output"></pre>
         </div>
         <div id="error"></div>
     </div>
@@ -51,6 +53,7 @@
             const result = await response.json();
             if (result.sql_query) {
                 document.getElementById("sql-output").innerText = result.sql_query;
+                document.getElementById("api-output").innerText = JSON.stringify(result.api_result, null, 2);
                 document.getElementById("error").innerText = "";
             } else {
                 document.getElementById("error").innerText = result.error;

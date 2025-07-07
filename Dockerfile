@@ -13,7 +13,7 @@ COPY poetry.lock .
 # Установка зависимостей в виртуальную среду
 RUN poetry config virtualenvs.in-project true && \
     poetry install --no-root --no-interaction --no-ansi --no-cache && \
-    poetry run pip install --no-cache-dir flask==3.0.3 openai==1.30.0
+    poetry run pip install --no-cache-dir flask==3.0.3 openai==1.30.0 requests==2.32.0 tenacity==8.5.0
 
 # Копирование приложения
 COPY app ./app
