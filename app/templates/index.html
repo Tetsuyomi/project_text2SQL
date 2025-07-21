@@ -8,19 +8,19 @@
 </head>
 <body>
     <div class="container">
-        <h1>Text-to-SQL Generator</h1>
-        <h2>Upload Database Schema (JSON)</h2>
+        <h1>Text-to-SQL Generator 1.0</h1>
+        <h2>Загрузить схему базы данных (JSON)</h2>
         <form id="schema-form" enctype="multipart/form-data">
             <input type="file" name="schema_file" accept=".json" required>
-            <button type="submit">Upload Schema</button>
+            <button type="submit">Загрузить схему</button>
         </form>
-        <h2>Enter Natural Language Query</h2>
+        <h2>Введите запрос для базы данных</h2>
         <form id="query-form">
-            <textarea name="query" placeholder="e.g., Find all customers older than 25" required></textarea>
-            <button type="submit">Generate SQL</button>
+            <textarea name="query" placeholder="e.g., зависимость количества аварий от марки машины" required></textarea>
+            <button type="submit">Сгенирировать SQL</button>
         </form>
         <div id="result">
-            <h2>Generated SQL Query</h2>
+            <h2>Сгенерированный SQL запрос</h2>
             <pre id="sql-output"></pre>
             <h2>API Response</h2>
             <pre id="api-output"></pre>
