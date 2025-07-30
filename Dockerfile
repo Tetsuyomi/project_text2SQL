@@ -12,8 +12,7 @@ COPY poetry.lock .
 
 # Установка зависимостей в виртуальную среду
 RUN poetry config virtualenvs.in-project true && \
-    poetry install --no-root --no-interaction --no-ansi --no-cache && \
-    poetry run pip install --no-cache-dir flask==3.0.3 openai==1.30.0 requests==2.32.0 tenacity==8.5.0
+    poetry install --no-root --no-interaction --no-ansi --no-cache
 
 # Копирование приложения
 COPY app ./app
@@ -24,4 +23,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:5000/ || exit 1
 
 # Запуск приложения
-CMD ["/app/.venv/bin/python", "app/main.py"]
+CMD ["/app/.venv/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]

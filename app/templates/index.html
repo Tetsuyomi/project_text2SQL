@@ -16,14 +16,14 @@
         </form>
         <h2>Введите запрос для базы данных</h2>
         <form id="query-form">
-            <textarea name="query" placeholder="e.g., зависимость количества аварий от марки машины" required></textarea>
+            <textarea name="natural_language_query" placeholder="e.g., зависимость количества аварий от марки машины" required></textarea>
             <button type="submit">Сгенирировать SQL</button>
         </form>
         <div id="result">
             <h2>Сгенерированный SQL запрос</h2>
             <pre id="sql-output"></pre>
-            <h2>API Response</h2>
-            <pre id="api-output"></pre>
+            <h2>Результат запроса</h2>
+            <pre id="query-output"></pre>
         </div>
         <div id="error"></div>
     </div>
@@ -31,32 +31,40 @@
         document.getElementById("schema-form").addEventListener("submit", async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
-            const response = await fetch("/", {
-                method: "POST",
-                body: formData
-            });
-            const result = await response.json();
-            if (result.status) {
-                alert(result.status);
-            } else {
-                document.getElementById("error").innerText = result.error;
+            try {
+                const response = await fetch("/upload-schema", {
+                    method: "POST",
+                    body: formData
+                });
+                const result = await response.json();
+                if (result.status) {
+                    alert(result.status);
+                } else {
+                    document.getElementById("error").innerText = result.error;
+                }
+            } catch (error) {
+                document.getElementById("error").innerText = "Error uploading schema: " + error;
             }
         });
 
         document.getElementById("query-form").addEventListener("submit", async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
-            const response = await fetch("/", {
-                method: "POST",
-                body: formData
-            });
-            const result = await response.json();
-            if (result.sql_query) {
-                document.getElementById("sql-output").innerText = result.sql_query;
-                document.getElementById("api-output").innerText = JSON.stringify(result.api_result, null, 2);
-                document.getElementById("error").innerText = "";
-            } else {
-                document.getElementById("error").innerText = result.error;
+            try {
+                const response = await fetch("/query", {
+                    method: "POST",
+                    body: formData
+                });
+                const result = await response.json();
+                if (result.sql_query) {
+                    document.getElementById("sql-output").innerText = result.sql_query;
+                    document.getElementById("query-output").innerText = JSON.stringify(result.result, null, 2);
+                    document.getElementById("error").innerText = "";
+                } else {
+                    document.getElementById("error").innerText = result.error;
+                }
+            } catch (error) {
+                document.getElementById("error").innerText = "Error executing query: " + error;
             }
         });
     </script>

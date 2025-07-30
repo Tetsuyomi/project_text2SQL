@@ -60,7 +60,7 @@ client = OpenAI(
 ### 5. Локальный запуск (без Docker)
 Если вы хотите запустить приложение локально:
 ```bash
-poetry run python app/main.py
+poetry run python app/3 версия.py
 ```
 
 ## Использование
