@@ -1,72 +1,475 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Text-to-SQL Generator 1.0</title>
+    <title>Text-to-SQL Generator v2.0</title>
     <link rel="stylesheet" href="/static/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="container">
-        <h1>Text-to-SQL Generator 1.0</h1>
-        <h2>Загрузить схему базы данных (JSON)</h2>
-        <form id="schema-form" enctype="multipart/form-data">
-            <input type="file" name="schema_file" accept=".json" required>
-            <button type="submit">Загрузить схему</button>
-        </form>
-        <h2>Введите запрос для базы данных</h2>
-        <form id="query-form">
-            <textarea name="natural_language_query" placeholder="e.g., зависимость количества аварий от марки машины" required></textarea>
-            <button type="submit">Сгенирировать SQL</button>
-        </form>
-        <div id="result">
-            <h2>Сгенерированный SQL запрос</h2>
-            <pre id="sql-output"></pre>
-            <h2>Результат запроса</h2>
-            <pre id="query-output"></pre>
+        <header class="header">
+            <h1><i class="fas fa-database"></i> Text-to-SQL Generator</h1>
+            <p class="subtitle">Конвертация текстовых запросов в SQL с использованием RAG системы</p>
+        </header>
+
+        <!-- Статус системы -->
+        <div class="status-panel">
+            <div class="status-item">
+                <i class="fas fa-server"></i>
+                <span>База данных: <span id="db-status" class="status-indicator">Проверка...</span></span>
+            </div>
+            <div class="status-item">
+                <i class="fas fa-brain"></i>
+                <span>RAG система: <span id="rag-status" class="status-indicator">Проверка...</span></span>
+            </div>
+            <div class="status-item">
+                <i class="fas fa-file-code"></i>
+                <span>DDL: <span id="ddl-status" class="status-indicator">Не загружен</span></span>
+            </div>
+            <div class="status-item">
+                <i class="fas fa-filter"></i>
+                <span>Фильтры: <span id="filters-status" class="status-indicator">Не загружены</span></span>
+            </div>
         </div>
-        <div id="error"></div>
+
+        <!-- Загрузка файлов -->
+        <div class="upload-section">
+            <h2><i class="fas fa-upload"></i> Загрузка схемы базы данных</h2>
+            
+            <div class="upload-cards">
+                <div class="upload-card">
+                    <div class="card-header">
+                        <i class="fas fa-file-code"></i>
+                        <h3>DDL файл</h3>
+                    </div>
+                    <p>SQL файл с CREATE TABLE командами для всех таблиц</p>
+                    <form id="ddl-form" class="upload-form">
+                        <div class="file-input-wrapper">
+                            <input type="file" name="ddl_file" accept=".sql" required>
+                            <label for="ddl_file" class="file-label">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                Выберите .sql файл
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-upload"></i> Загрузить DDL
+                        </button>
+                    </form>
+                </div>
+
+                <div class="upload-card">
+                    <div class="card-header">
+                        <i class="fas fa-filter"></i>
+                        <h3>Фильтры и значения</h3>
+                    </div>
+                    <p>JSON файл с фильтрами и примерами значений полей</p>
+                    <form id="filters-form" class="upload-form">
+                        <div class="file-input-wrapper">
+                            <input type="file" name="filters_file" accept=".json" required>
+                            <label for="filters_file" class="file-label">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                                Выберите .json файл
+                            </label>
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-upload"></i> Загрузить фильтры
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Информация о схеме -->
+        <div id="schema-info" class="info-panel" style="display: none;">
+            <h3><i class="fas fa-info-circle"></i> Информация о схеме</h3>
+            <div id="schema-details" class="schema-details"></div>
+        </div>
+
+        <!-- Запрос -->
+        <div class="query-section">
+            <h2><i class="fas fa-search"></i> Введите запрос</h2>
+            <form id="query-form" class="query-form">
+                <div class="query-input-wrapper">
+                    <textarea 
+                        name="natural_language_query" 
+                        placeholder="Например: зависимость количества аварий от марки машины"
+                        required
+                    ></textarea>
+                    <button type="submit" class="btn btn-success">
+                        <i class="fas fa-magic"></i> Сгенерировать SQL
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Результаты -->
+        <div id="results" class="results-section" style="display: none;">
+            <div class="result-card">
+                <div class="card-header">
+                    <i class="fas fa-code"></i>
+                    <h3>Сгенерированный SQL</h3>
+                </div>
+                <pre id="sql-output" class="code-output"></pre>
+            </div>
+
+            <div class="result-card">
+                <div class="card-header">
+                    <i class="fas fa-table"></i>
+                    <h3>Результат запроса</h3>
+                </div>
+                <div id="query-output" class="data-output"></div>
+            </div>
+
+            <div id="attempts-info" class="attempts-info" style="display: none;">
+                <h4><i class="fas fa-history"></i> История попыток</h4>
+                <div id="attempts-list"></div>
+            </div>
+        </div>
+
+        <!-- Ошибки -->
+        <div id="error" class="error-panel" style="display: none;"></div>
+
+        <!-- Загрузка -->
+        <div id="loading" class="loading-overlay" style="display: none;">
+            <div class="loading-spinner">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Обработка запроса...</p>
+            </div>
+        </div>
     </div>
+
     <script>
-        document.getElementById("schema-form").addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
-            try {
-                const response = await fetch("/upload-schema", {
-                    method: "POST",
-                    body: formData
-                });
-                const result = await response.json();
-                if (result.status) {
-                    alert(result.status);
-                } else {
-                    document.getElementById("error").innerText = result.error;
-                }
-            } catch (error) {
-                document.getElementById("error").innerText = "Error uploading schema: " + error;
-            }
+        // Глобальные переменные
+        let currentQuery = '';
+        let appState = {
+            ddlLoaded: false,
+            filtersLoaded: false,
+            databaseConnected: false,
+            ragReady: false
+        };
+
+        // Инициализация при загрузке страницы
+        document.addEventListener('DOMContentLoaded', function() {
+            checkSystemStatus();
+            setupEventListeners();
         });
 
-        document.getElementById("query-form").addEventListener("submit", async (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.target);
+        // Проверка статуса системы
+        async function checkSystemStatus() {
             try {
-                const response = await fetch("/query", {
-                    method: "POST",
+                const response = await fetch('/status');
+                const status = await response.json();
+                
+                updateStatusIndicators(status);
+                updateAppState(status);
+                
+            } catch (error) {
+                console.error('Ошибка проверки статуса:', error);
+                showError('Ошибка подключения к серверу');
+            }
+        }
+
+        // Обновление индикаторов статуса
+        function updateStatusIndicators(status) {
+            const dbStatus = document.getElementById('db-status');
+            const ragStatus = document.getElementById('rag-status');
+            const ddlStatus = document.getElementById('ddl-status');
+            const filtersStatus = document.getElementById('filters-status');
+
+            // Статус базы данных
+            if (status.database_status?.connected) {
+                dbStatus.textContent = 'Подключена';
+                dbStatus.className = 'status-indicator success';
+            } else {
+                dbStatus.textContent = 'Отключена';
+                dbStatus.className = 'status-indicator error';
+            }
+
+            // Статус RAG системы
+            if (status.rag_status?.ready) {
+                ragStatus.textContent = 'Готова';
+                ragStatus.className = 'status-indicator success';
+            } else {
+                ragStatus.textContent = 'Не готова';
+                ragStatus.className = 'status-indicator warning';
+            }
+
+            // Статус DDL
+            if (status.app_state?.ddl_loaded) {
+                ddlStatus.textContent = 'Загружен';
+                ddlStatus.className = 'status-indicator success';
+            } else {
+                ddlStatus.textContent = 'Не загружен';
+                ddlStatus.className = 'status-indicator error';
+            }
+
+            // Статус фильтров
+            if (status.app_state?.filters_loaded) {
+                filtersStatus.textContent = 'Загружены';
+                filtersStatus.className = 'status-indicator success';
+            } else {
+                filtersStatus.textContent = 'Не загружены';
+                filtersStatus.className = 'status-indicator error';
+            }
+        }
+
+        // Обновление состояния приложения
+        function updateAppState(status) {
+            appState.databaseConnected = status.database_status?.connected || false;
+            appState.ragReady = status.rag_status?.ready || false;
+            appState.ddlLoaded = status.app_state?.ddl_loaded || false;
+            appState.filtersLoaded = status.app_state?.filters_loaded || false;
+
+            // Показываем информацию о схеме если DDL загружен
+            if (appState.ddlLoaded && status.rag_status?.schema_summary) {
+                showSchemaInfo(status.rag_status.schema_summary);
+            }
+        }
+
+        // Показ информации о схеме
+        function showSchemaInfo(summary) {
+            const schemaInfo = document.getElementById('schema-info');
+            const schemaDetails = document.getElementById('schema-details');
+            
+            schemaDetails.innerHTML = `
+                <div class="schema-stats">
+                    <div class="stat-item">
+                        <span class="stat-label">Таблиц:</span>
+                        <span class="stat-value">${summary.total_tables}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Столбцов:</span>
+                        <span class="stat-value">${summary.total_columns}</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Чанков:</span>
+                        <span class="stat-value">${summary.chunks_count}</span>
+                    </div>
+                </div>
+                <div class="schema-tables">
+                    <h4>Таблицы:</h4>
+                    <div class="tables-list">
+                        ${summary.tables.map(table => `<span class="table-tag">${table}</span>`).join('')}
+                    </div>
+                </div>
+            `;
+            
+            schemaInfo.style.display = 'block';
+        }
+
+        // Настройка обработчиков событий
+        function setupEventListeners() {
+            // Загрузка DDL
+            document.getElementById('ddl-form').addEventListener('submit', handleDDLUpload);
+            
+            // Загрузка фильтров
+            document.getElementById('filters-form').addEventListener('submit', handleFiltersUpload);
+            
+            // Выполнение запроса
+            document.getElementById('query-form').addEventListener('submit', handleQuery);
+            
+            // Обработка файловых инпутов
+            setupFileInputs();
+        }
+
+        // Настройка файловых инпутов
+        function setupFileInputs() {
+            const fileInputs = document.querySelectorAll('input[type="file"]');
+            fileInputs.forEach(input => {
+                input.addEventListener('change', function(e) {
+                    const file = e.target.files[0];
+                    const label = this.parentElement.querySelector('.file-label');
+                    if (file) {
+                        label.innerHTML = `<i class="fas fa-file"></i> ${file.name}`;
+                        label.classList.add('file-selected');
+                    } else {
+                        label.innerHTML = `<i class="fas fa-cloud-upload-alt"></i> Выберите файл`;
+                        label.classList.remove('file-selected');
+                    }
+                });
+            });
+        }
+
+        // Обработка загрузки DDL
+        async function handleDDLUpload(e) {
+            e.preventDefault();
+            showLoading('Загрузка DDL файла...');
+            
+            try {
+                const formData = new FormData(e.target);
+                const response = await fetch('/upload-ddl', {
+                    method: 'POST',
                     body: formData
                 });
+                
                 const result = await response.json();
-                if (result.sql_query) {
-                    document.getElementById("sql-output").innerText = result.sql_query;
-                    document.getElementById("query-output").innerText = JSON.stringify(result.result, null, 2);
-                    document.getElementById("error").innerText = "";
+                
+                if (result.status === 'success') {
+                    showSuccess(`DDL файл загружен успешно! Загружено таблиц: ${result.tables_count}`);
+                    setTimeout(checkSystemStatus, 1000);
                 } else {
-                    document.getElementById("error").innerText = result.error;
+                    showError(result.detail || 'Ошибка загрузки DDL файла');
                 }
             } catch (error) {
-                document.getElementById("error").innerText = "Error executing query: " + error;
+                showError('Ошибка загрузки DDL файла: ' + error.message);
+            } finally {
+                hideLoading();
             }
-        });
+        }
+
+        // Обработка загрузки фильтров
+        async function handleFiltersUpload(e) {
+            e.preventDefault();
+            showLoading('Загрузка фильтров...');
+            
+            try {
+                const formData = new FormData(e.target);
+                const response = await fetch('/upload-filters', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showSuccess(`Фильтры загружены успешно!`);
+                    setTimeout(checkSystemStatus, 1000);
+                } else {
+                    showError(result.detail || 'Ошибка загрузки фильтров');
+                }
+            } catch (error) {
+                showError('Ошибка загрузки фильтров: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Обработка запроса
+        async function handleQuery(e) {
+            e.preventDefault();
+            
+            if (!appState.ddlLoaded) {
+                showError('Сначала загрузите DDL файл');
+                return;
+            }
+            
+            const formData = new FormData(e.target);
+            currentQuery = formData.get('natural_language_query');
+            
+            showLoading('Генерация SQL запроса...');
+            
+            try {
+                const response = await fetch('/query', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showResults(result);
+                } else {
+                    showError(result.detail || 'Ошибка обработки запроса');
+                }
+            } catch (error) {
+                showError('Ошибка выполнения запроса: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Показ результатов
+        function showResults(result) {
+            const resultsSection = document.getElementById('results');
+            const sqlOutput = document.getElementById('sql-output');
+            const queryOutput = document.getElementById('query-output');
+            const attemptsInfo = document.getElementById('attempts-info');
+            const attemptsList = document.getElementById('attempts-list');
+            
+            // Показываем SQL
+            sqlOutput.textContent = result.sql_query;
+            
+            // Показываем результат запроса
+            if (result.result.status === 'success') {
+                queryOutput.innerHTML = formatDataTable(result.result.data);
+            } else {
+                queryOutput.innerHTML = `<div class="error-message">${result.result.error}</div>`;
+            }
+            
+            // Показываем информацию о попытках если есть
+            if (result.result.attempts && result.result.attempts.length > 0) {
+                attemptsList.innerHTML = result.result.attempts.map(attempt => `
+                    <div class="attempt-item">
+                        <div class="attempt-header">
+                            <span class="attempt-number">Попытка ${attempt.attempt}</span>
+                            <span class="attempt-status ${attempt.error ? 'error' : 'success'}">
+                                ${attempt.error ? 'Ошибка' : 'Успех'}
+                            </span>
+                        </div>
+                        <div class="attempt-sql">${attempt.sql}</div>
+                        ${attempt.error ? `<div class="attempt-error">${attempt.error}</div>` : ''}
+                    </div>
+                `).join('');
+                attemptsInfo.style.display = 'block';
+            } else {
+                attemptsInfo.style.display = 'none';
+            }
+            
+            resultsSection.style.display = 'block';
+            resultsSection.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Форматирование таблицы данных
+        function formatDataTable(data) {
+            if (!data || data.length === 0) {
+                return '<div class="no-data">Нет данных</div>';
+            }
+            
+            const columns = Object.keys(data[0]);
+            const tableHTML = `
+                <table class="data-table">
+                    <thead>
+                        <tr>${columns.map(col => `<th>${col}</th>`).join('')}</tr>
+                    </thead>
+                    <tbody>
+                        ${data.map(row => `
+                            <tr>${columns.map(col => `<td>${row[col] || ''}</td>`).join('')}</tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+            
+            return tableHTML;
+        }
+
+        // Показ загрузки
+        function showLoading(message = 'Загрузка...') {
+            const loading = document.getElementById('loading');
+            loading.querySelector('p').textContent = message;
+            loading.style.display = 'flex';
+        }
+
+        // Скрытие загрузки
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+
+        // Показ успеха
+        function showSuccess(message) {
+            const errorPanel = document.getElementById('error');
+            errorPanel.innerHTML = `<div class="success-message"><i class="fas fa-check-circle"></i> ${message}</div>`;
+            errorPanel.style.display = 'block';
+            setTimeout(() => errorPanel.style.display = 'none', 5000);
+        }
+
+        // Показ ошибки
+        function showError(message) {
+            const errorPanel = document.getElementById('error');
+            errorPanel.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> ${message}</div>`;
+            errorPanel.style.display = 'block';
+        }
     </script>
 </body>
 </html>
