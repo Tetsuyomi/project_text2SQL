@@ -82,6 +82,10 @@ async def upload_ddl(ddl_file: UploadFile = File(...)):
         content = (await ddl_file.read()).decode("utf-8", errors="ignore")
         ddl_schema = ddl_parser.parse(content)
         
+        # Отладочная информация
+        logger.info(f"DDL schema type: {type(ddl_schema)}")
+        logger.info(f"DDL schema: {ddl_schema}")
+        
         # Загружаем схему в RAG систему
         rag_system.load_ddl_schema(ddl_schema)
         
@@ -89,13 +93,28 @@ async def upload_ddl(ddl_file: UploadFile = File(...)):
         app_state["ddl_loaded"] = True
         app_state["schema_loaded"] = True
         
-        logger.info(f"DDL uploaded successfully with {len(ddl_schema.get('tables', {}))} tables")
+        # Проверяем тип ddl_schema
+        if isinstance(ddl_schema, dict):
+            tables_count = len(ddl_schema.get('tables', {}))
+            logger.info(f"DDL uploaded successfully with {tables_count} tables")
+        else:
+            logger.warning(f"DDL schema is not a dict: {type(ddl_schema)}")
+            tables_count = 0
+        logger.info(f"App state updated: ddl_loaded={app_state['ddl_loaded']}, schema_loaded={app_state['schema_loaded']}")
         
+        # Формируем ответ
+        if isinstance(ddl_schema, dict):
+            tables = list(ddl_schema.get("tables", {}).keys())
+            tables_count = len(ddl_schema.get("tables", {}))
+        else:
+            tables = []
+            tables_count = 0
+            
         return {
             "status": "success",
             "message": "DDL файл загружен успешно",
-            "tables": list(ddl_schema.get("tables", {}).keys()),
-            "tables_count": len(ddl_schema.get("tables", {}))
+            "tables": tables,
+            "tables_count": tables_count
         }
         
     except Exception as e:
@@ -133,7 +152,10 @@ async def upload_filters(filters_file: UploadFile = File(...)):
 @app.post("/query")
 async def process_query(natural_language_query: str = Form(...)):
     """Обработка текстового запроса с генерацией SQL и выполнением"""
-    if not app_state["schema_loaded"]:
+    logger.info(f"Query request received: {natural_language_query}")
+    logger.info(f"App state: ddl_loaded={app_state.get('ddl_loaded', False)}, schema_loaded={app_state.get('schema_loaded', False)}")
+    
+    if not app_state.get("schema_loaded", False):
         raise HTTPException(status_code=400, detail="Схема базы данных не загружена")
     
     if not app_state["database_connected"]:

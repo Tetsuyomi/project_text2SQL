@@ -153,47 +153,144 @@ class DatabaseSchemaRAG:
     def load_ddl_schema(self, ddl_schema: Dict[str, Any]):
         """Загружает схему из DDL."""
         self.ddl_schema = ddl_schema or {}
+        
+        # Подробное логирование DDL схемы
+        logger.info("=" * 60)
+        logger.info("DDL СХЕМА ЗАГРУЖЕНА")
+        logger.info("=" * 60)
+        
+        tables = self.ddl_schema.get('tables', {})
+        logger.info(f"Всего таблиц в DDL: {len(tables)}")
+        
+        for table_name, table_info in tables.items():
+            logger.info(f"📋 Таблица: {table_name}")
+            columns = table_info.get('columns', {})
+            primary_keys = table_info.get('primary_key', [])
+            foreign_keys = table_info.get('foreign_keys', [])
+            
+            logger.info(f"   Колонок: {len(columns)}")
+            logger.info(f"   Primary Keys: {primary_keys}")
+            logger.info(f"   Foreign Keys: {len(foreign_keys)}")
+            
+            for col_name, col_type in columns.items():
+                is_pk = col_name in primary_keys
+                is_fk = any(fk.get('columns', [col_name]) == [col_name] for fk in foreign_keys)
+                
+                pk_marker = " 🔑" if is_pk else ""
+                fk_marker = " 🔗" if is_fk else ""
+                logger.info(f"     {col_name}: {col_type}{pk_marker}{fk_marker}")
+            
+            # Логируем внешние ключи
+            if foreign_keys:
+                logger.info(f"   Внешние ключи:")
+                for fk in foreign_keys:
+                    cols = fk.get('columns', [])
+                    ref_table = fk.get('ref_table', '')
+                    ref_cols = fk.get('ref_columns', [])
+                    logger.info(f"     {cols} -> {ref_table}.{ref_cols}")
+            
+            logger.info("")
+        
+        logger.info("=" * 60)
+        
+        # Обрабатываем схему для RAG системы
+        logger.info("🔄 Обработка схемы для RAG системы...")
+        self.process_schema(self.ddl_schema)
+        logger.info("✅ Схема обработана и готова для поиска")
 
     def ingest_response_values(self, response_json: Dict[str, Any]):
         """Извлекает справочные значения для колонок из *_filters."""
+        logger.info("=" * 60)
+        logger.info("ОБРАБОТКА JSON ФИЛЬТРОВ")
+        logger.info("=" * 60)
+        
+        processed_filters = 0
+        processed_tables = set()
+        
         for key, arr in (response_json or {}).items():
             if not key.endswith("_filters") or not isinstance(arr, list):
                 continue
             table = key[:-8]
-            for item in arr:
+            processed_tables.add(table)
+            logger.info(f"📊 Обрабатываем фильтры для таблицы: {table}")
+            logger.info(f"   Найдено фильтров: {len(arr)}")
+            
+            for i, item in enumerate(arr):
                 f = (item or {}).get("filter", {})
                 field = f.get("field")
+                filter_type = item.get("filter_type")
+                
                 if not field:
+                    logger.warning(f"   ⚠️ Фильтр {i+1}: отсутствует поле 'field'")
                     continue
+                
+                logger.info(f"   🔍 Фильтр {i+1}: {field} ({filter_type})")
+                
                 rec = {}
-                if item.get("filter_type") == "enum-filter":
+                if filter_type == "enum-filter":
                     vals = f.get("values")
                     if isinstance(vals, list):
                         filtered_vals = [v for v in vals if v is not None and v != "" and str(v).strip()]
                         if filtered_vals:
                             rec["examples"] = filtered_vals[:50]
-                elif item.get("filter_type") == "value-range-filter":
+                            logger.info(f"     Примеры значений: {len(filtered_vals)} (показано до 50)")
+                            if filtered_vals:
+                                logger.info(f"     Первые 5: {filtered_vals[:5]}")
+                elif filter_type == "value-range-filter":
                     min_val = f.get("min_value")
                     max_val = f.get("max_value")
                     if min_val is not None or max_val is not None:
                         rec["range"] = {"min": min_val, "max": max_val}
-                elif item.get("filter_type") == "datetime-range-filter":
+                        logger.info(f"     Диапазон: {min_val} - {max_val}")
+                elif filter_type == "datetime-range-filter":
                     start_dt = f.get("start_datetime")
                     end_dt = f.get("end_datetime")
                     if start_dt or end_dt:
                         rec["datetime_range"] = {"start": start_dt, "end": end_dt}
+                        logger.info(f"     Период: {start_dt} - {end_dt}")
+                
                 if rec:
                     self.column_values[(table, field)] = rec
+                    processed_filters += 1
+                    logger.info(f"     ✅ Сохранено")
+                else:
+                    logger.warning(f"     ⚠️ Не удалось извлечь данные")
+            
+            logger.info("")
+        
+        logger.info(f"📈 ИТОГО:")
+        logger.info(f"   Обработано таблиц: {len(processed_tables)}")
+        logger.info(f"   Обработано фильтров: {processed_filters}")
+        logger.info(f"   Сохранено значений колонок: {len(self.column_values)}")
+        logger.info("=" * 60)
 
     def get_allowed_schema(self) -> Dict[str, List[str]]:
         """Возвращает разрешенные таблицы и столбцы."""
-        if self.ddl_schema.get("tables"):
-            return {t: list(info.get("columns", {}).keys()) for t, info in self.ddl_schema["tables"].items()}
+        logger.info("=" * 60)
+        logger.info("ПОЛУЧЕНИЕ РАЗРЕШЕННОЙ СХЕМЫ")
+        logger.info("=" * 60)
         
-        allowed: Dict[str, List[str]] = {}
-        tables = (self.normalized_schema or {}).get("tables", {})
-        for tname, tinfo in tables.items():
-            allowed[tname] = list((tinfo or {}).get("columns", {}).keys())
+        if self.ddl_schema.get("tables"):
+            logger.info("📋 Используем схему из DDL")
+            allowed = {t: list(info.get("columns", {}).keys()) for t, info in self.ddl_schema["tables"].items()}
+        else:
+            logger.info("📋 Используем нормализованную схему")
+            allowed: Dict[str, List[str]] = {}
+            tables = (self.normalized_schema or {}).get("tables", {})
+            for tname, tinfo in tables.items():
+                allowed[tname] = list((tinfo or {}).get("columns", {}).keys())
+        
+        # Логируем доступные таблицы и столбцы
+        logger.info(f"📊 Доступных таблиц: {len(allowed)}")
+        for table_name, columns in allowed.items():
+            logger.info(f"   📋 {table_name}: {len(columns)} столбцов")
+            for col in columns[:10]:  # Показываем первые 10 столбцов
+                logger.info(f"     - {col}")
+            if len(columns) > 10:
+                logger.info(f"     ... и еще {len(columns) - 10} столбцов")
+            logger.info("")
+        
+        logger.info("=" * 60)
         return allowed
 
     def get_join_hints(self, max_hints: int = 10) -> List[str]:
@@ -254,6 +351,20 @@ class DatabaseSchemaRAG:
         
         return {k: v for k, v in groups.items() if v}
     
+    def _sanitize_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Очищает метаданные от неподдерживаемых типов данных для ChromaDB."""
+        sanitized = {}
+        for key, value in metadata.items():
+            if isinstance(value, list):
+                sanitized[key] = ', '.join(str(item) for item in value)
+            elif isinstance(value, dict):
+                sanitized[key] = str(value)
+            elif isinstance(value, (str, int, float, bool)) or value is None:
+                sanitized[key] = value
+            else:
+                sanitized[key] = str(value)
+        return sanitized
+    
     def create_embeddings(self, chunks: List[Dict[str, Any]]) -> List[List[float]]:
         """Создает TF-IDF эмбеддинги для всех чанков схемы."""
         texts = [chunk['content'] for chunk in chunks]
@@ -302,7 +413,7 @@ class DatabaseSchemaRAG:
             
             ids = [chunk['id'] for chunk in chunks]
             documents = [chunk['content'] for chunk in chunks]
-            metadatas = [chunk['metadata'] for chunk in chunks]
+            metadatas = [self._sanitize_metadata(chunk['metadata']) for chunk in chunks]
             
             self.collection.add(
                 ids=ids,
@@ -347,48 +458,72 @@ class DatabaseSchemaRAG:
     
     def retrieve_relevant_chunks(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Извлекает наиболее релевантные чанки схемы для заданного запроса."""
+        logger.info("=" * 60)
+        logger.info("ПОИСК РЕЛЕВАНТНЫХ ЧАНКОВ СХЕМЫ")
+        logger.info("=" * 60)
+        logger.info(f"🔍 Запрос: {query}")
+        logger.info(f"📊 Запрошено чанков: {top_k}")
+        logger.info(f"📋 Всего чанков в схеме: {len(self.schema_chunks)}")
+        
         if not self.collection:
-            logger.error("Vector database collection not initialized")
+            logger.warning("⚠️ Vector database collection не инициализирована")
             try:
                 if self.schema_chunks:
-                    logger.info("Attempting to reinitialize vector database collection")
+                    logger.info("🔄 Попытка переинициализации vector database collection")
                     embeddings = self.create_embeddings(self.schema_chunks)
                     self.store_in_vector_db(self.schema_chunks, embeddings)
                     if self.collection:
-                        logger.info("Successfully reinitialized vector database collection")
+                        logger.info("✅ Успешно переинициализирована vector database collection")
                         return self._retrieve_with_collection(query, top_k)
             except Exception as e:
-                logger.error(f"Failed to reinitialize vector database: {e}")
+                logger.error(f"❌ Не удалось переинициализировать vector database: {e}")
+            logger.info("🔄 Используем fallback поиск")
             return self._fallback_retrieval(query, top_k)
         
+        logger.info("✅ Vector database collection готова")
         return self._retrieve_with_collection(query, top_k)
     
     def _retrieve_with_collection(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Извлекает чанки используя инициализированную коллекцию."""
         try:
             if self.tfidf_vectorizer is not None:
+                logger.info("🔍 Используем TF-IDF поиск")
                 query_vector = self.tfidf_vectorizer.transform([query])
                 similarities = cosine_similarity(query_vector, self.tfidf_matrix).flatten()
                 top_indices = similarities.argsort()[-top_k:][::-1]
                 
                 relevant_chunks = []
-                for idx in top_indices:
+                logger.info("📊 Найденные релевантные чанки:")
+                
+                for i, idx in enumerate(top_indices):
                     chunk = self.schema_chunks[idx]
+                    similarity_score = float(similarities[idx])
                     chunk_info = {
                         'id': chunk['id'],
                         'content': chunk['content'],
                         'metadata': chunk['metadata'],
-                        'similarity_score': float(similarities[idx])
+                        'similarity_score': similarity_score
                     }
                     relevant_chunks.append(chunk_info)
+                    
+                    # Логируем информацию о чанке
+                    table_name = chunk['metadata'].get('table_name', 'N/A')
+                    chunk_type = chunk['metadata'].get('chunk_type', 'N/A')
+                    logger.info(f"   {i+1}. Чанк: {chunk['id']}")
+                    logger.info(f"      Таблица: {table_name}")
+                    logger.info(f"      Тип: {chunk_type}")
+                    logger.info(f"      Схожесть: {similarity_score:.4f}")
+                    logger.info(f"      Содержание: {chunk['content'][:100]}...")
+                    logger.info("")
                 
-                logger.info(f"Retrieved {len(relevant_chunks)} relevant chunks using TF-IDF")
+                logger.info(f"✅ Найдено {len(relevant_chunks)} релевантных чанков с помощью TF-IDF")
                 return relevant_chunks
             else:
+                logger.warning("⚠️ TF-IDF vectorizer недоступен, используем fallback")
                 return self._fallback_retrieval(query, top_k)
                 
         except Exception as e:
-            logger.error(f"Error retrieving relevant chunks: {str(e)}")
+            logger.error(f"❌ Ошибка при поиске релевантных чанков: {str(e)}")
             return self._fallback_retrieval(query, top_k)
     
     def _fallback_retrieval(self, query: str, top_k: int) -> List[Dict[str, Any]]:
@@ -451,10 +586,18 @@ class DatabaseSchemaRAG:
         
         context = "\n\n".join(context_parts)
         
+        # Получаем полную схему для контекста
+        allowed_schema = self.get_allowed_schema()
+        schema_context = "Доступные таблицы и столбцы:\n"
+        for table_name, columns in allowed_schema.items():
+            schema_context += f"Таблица '{table_name}': {', '.join(columns)}\n"
+        
         prompt = f"""
-        Ты эксперт по генерации SQL-запросов. На основе предоставленной схемы базы данных и запроса на естественном языке создай корректный SQL-запрос для PostgreSQL.
+        Ты эксперт по генерации SQL-запросов для PostgreSQL. Создай корректный SQL-запрос на основе предоставленной схемы базы данных.
 
-        Схема базы данных (релевантные части):
+        {schema_context}
+
+        Релевантные части схемы:
         {context}
 
         Запрос на естественном языке:
@@ -464,13 +607,21 @@ class DatabaseSchemaRAG:
         - Тип запроса: {query_analysis['query_type']}
         - Ключевые слова: {', '.join(query_analysis['keywords'])}
 
+        КРИТИЧЕСКИ ВАЖНО: Используй ТОЛЬКО таблицы и столбцы, которые указаны в схеме выше. 
+        НЕ придумывай новые таблицы или столбцы.
+        
+        КРИТИЧЕСКИ ВАЖНО: 'count_accident' - это КОЛОНКА в таблице 'concentrations', а НЕ отдельная таблица.
+        НЕ используй 'count_accident' в FROM или JOIN - это НЕ таблица!
+        Если нужна таблица с данными о ДТП - используй 'accidents'.
+        Если нужна таблица с концентрациями ДТП - используй 'concentrations'.
+
         Создай SQL-запрос, который:
         1. Использует только существующие таблицы и столбцы из схемы
         2. Корректен для PostgreSQL
         3. Безопасен (не выполняет деструктивные действия)
         4. Оптимизирован для указанного типа запроса
 
-        В ответе должен быть только SQL-запрос.
+        В ответе должен быть только SQL-запрос без дополнительных комментариев.
         """
         
         return prompt
