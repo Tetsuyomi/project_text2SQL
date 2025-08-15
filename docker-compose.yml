@@ -1,5 +1,5 @@
 services:
-  text2sql:
+  text2sql_app:
     build:
       context: .
       dockerfile: Dockerfile
@@ -8,9 +8,36 @@ services:
     container_name: text2sql_app
     environment:
       - PYTHONUNBUFFERED=1
+      - DATABASE_URL=${DATABASE_URL}
+    # volumes:
+    #   - ./data:/app/data
+    #   - ./chroma_db:/app/chroma_db
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
+    restart: unless-stopped
+
+  # Опциональная база данных PostgreSQL (раскомментируйте если нужна локальная БД)
+  # db:
+  #   image: postgres:15
+  #   container_name: postgres_db
+  #   environment:
+  #     - POSTGRES_USER=${POSTGRES_USER:-readonly_user}
+  #     - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-readonly_user}
+  #     - POSTGRES_DB=${POSTGRES_DB:-dtp-map-db}
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-readonly_user} -d ${POSTGRES_DB:-dtp-map-db}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 10s
+
+volumes:
+  postgres_data:

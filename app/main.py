@@ -1,107 +1,256 @@
-from flask import Flask, request, render_template, jsonify
+from fastapi import FastAPI, Request, File, UploadFile, Form, HTTPException
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
 import json
-import sqlite3
 from openai import OpenAI
 import httpx
-import requests
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.sql import text
+from sqlalchemy.exc import DatabaseError, OperationalError
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+import os
+import logging
+import datetime
+from decimal import Decimal
+from typing import Dict, Any, List, Optional
+from .rag_system import DatabaseSchemaRAG
+from .ddl_parser import DDLParser
+from .sql_generator import SQLGenerator
+from .database_manager import DatabaseManager
 
-app = Flask(__name__, template_folder='templates', static_folder='static')
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Initialize LLM7 client
-client = OpenAI(
-    base_url="https://api.llm7.io/v1",
-    api_key="unused",
-    http_client=httpx.Client()  # Явно задаем HTTP-клиент без прокси
-)
+app = FastAPI(title="Text-to-SQL Generator", version="2.0.0")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+templates = Jinja2Templates(directory="app/templates")
 
-# Store schema globally (for simplicity)
-db_schema = {}
+# Инициализация компонентов
+rag_system = DatabaseSchemaRAG()
+ddl_parser = DDLParser()
+sql_generator = SQLGenerator()
+db_manager = DatabaseManager()
 
-def generate_sql_query(natural_language_query, schema):
-    schema_str = json.dumps(schema, indent=2)
-    prompt = f"""
-    Ты эксперт по генерации SQL-запросов. На основе схемы базы данных и запроса на естественном языке создайте корректный SQL-запрос для PostgreSQL.
+# Глобальное состояние приложения
+app_state = {
+    "schema_loaded": False,
+    "ddl_loaded": False,
+    "filters_loaded": False,
+    "database_connected": False
+}
 
-    Схема базы данных:
-    {schema_str}
+@app.on_event("startup")
+async def startup_event():
+    """Инициализация приложения при запуске"""
+    try:
+        await db_manager.connect()
+        app_state["database_connected"] = True
+        logger.info("Database connection established")
+    except Exception as e:
+        logger.error(f"Failed to connect to database: {e}")
+        app_state["database_connected"] = False
 
-    Запрос на естественном языке:
-    {natural_language_query}
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Очистка ресурсов при завершении"""
+    await db_manager.disconnect()
+    logger.info("Application shutdown complete")
 
-    Предоставьте только SQL-запрос в виде обычного текста. Убедитесь, что он корректен для PostgreSQL.
-    Не позволяйте пользователю выполнять диструктивные действия.
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super().default(obj)
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    """Главная страница приложения"""
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "app_state": app_state
+    })
+
+@app.post("/upload-ddl")
+async def upload_ddl(ddl_file: UploadFile = File(...)):
+    """Загрузка DDL файла с определением таблиц"""
+    if not ddl_file.filename.endswith(".sql"):
+        raise HTTPException(status_code=400, detail="Файл должен иметь расширение .sql")
     
-    В ответе должен быть только SQL-запрос.
-    """
-    response = client.chat.completions.create(
-        model="gpt-4.1-nano",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content.strip()
-
-
-@retry(
-    stop=stop_after_attempt(10),  # Пытаться до 10 раз
-    wait=wait_fixed(2),  # Ждать 2 секунды между попытками
-    retry=retry_if_exception_type((requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.HTTPError))
-)
-
-
-def send_sql_to_api(sql_query):
-    api_url = "http://10.146.35.48:11901/api/dtp-map/v1/charts"
-    payload = {
-        "chart_specs": {
-            "x_axis_field": None,
-            "y_axis_fields": None,
-            "raw_sql": sql_query,
-            "chart_settings": None
-        },
-        "filters": {
-            "accidents_filters": [],
-            "cars_filters": [],
-            "participants_filters": []
+    try:
+        content = (await ddl_file.read()).decode("utf-8", errors="ignore")
+        ddl_schema = ddl_parser.parse(content)
+        
+        # Отладочная информация
+        logger.info(f"DDL schema type: {type(ddl_schema)}")
+        logger.info(f"DDL schema: {ddl_schema}")
+        
+        # Загружаем схему в RAG систему
+        rag_system.load_ddl_schema(ddl_schema)
+        
+        # Обновляем состояние приложения
+        app_state["ddl_loaded"] = True
+        app_state["schema_loaded"] = True
+        
+        # Проверяем тип ddl_schema
+        if isinstance(ddl_schema, dict):
+            tables_count = len(ddl_schema.get('tables', {}))
+            logger.info(f"DDL uploaded successfully with {tables_count} tables")
+        else:
+            logger.warning(f"DDL schema is not a dict: {type(ddl_schema)}")
+            tables_count = 0
+        logger.info(f"App state updated: ddl_loaded={app_state['ddl_loaded']}, schema_loaded={app_state['schema_loaded']}")
+        
+        # Формируем ответ
+        if isinstance(ddl_schema, dict):
+            tables = list(ddl_schema.get("tables", {}).keys())
+            tables_count = len(ddl_schema.get("tables", {}))
+        else:
+            tables = []
+            tables_count = 0
+            
+        return {
+            "status": "success",
+            "message": "DDL файл загружен успешно",
+            "tables": tables,
+            "tables_count": tables_count
         }
+        
+    except Exception as e:
+        logger.error(f"DDL upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки DDL: {str(e)}")
+
+@app.post("/upload-filters")
+async def upload_filters(filters_file: UploadFile = File(...)):
+    """Загрузка JSON файла с фильтрами и примерами значений"""
+    if not filters_file.filename.endswith(".json"):
+        raise HTTPException(status_code=400, detail="Файл должен иметь расширение .json")
+    
+    try:
+        content = (await filters_file.read()).decode("utf-8", errors="ignore")
+        filters_data = json.loads(content)
+        
+        # Обрабатываем фильтры через RAG систему
+        rag_system.ingest_response_values(filters_data)
+        
+        # Обновляем состояние приложения
+        app_state["filters_loaded"] = True
+        
+        logger.info(f"Filters uploaded successfully")
+        
+        return {
+            "status": "success",
+            "message": "Фильтры загружены успешно",
+            "filters_count": len(filters_data)
+        }
+        
+    except Exception as e:
+        logger.error(f"Filters upload failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка загрузки фильтров: {str(e)}")
+
+@app.post("/query")
+async def process_query(natural_language_query: str = Form(...)):
+    """Обработка текстового запроса с генерацией SQL и выполнением"""
+    logger.info(f"Query request received: {natural_language_query}")
+    logger.info(f"App state: ddl_loaded={app_state.get('ddl_loaded', False)}, schema_loaded={app_state.get('schema_loaded', False)}")
+    
+    if not app_state.get("schema_loaded", False):
+        raise HTTPException(status_code=400, detail="Схема базы данных не загружена")
+    
+    if not app_state["database_connected"]:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    
+    try:
+        # Генерируем SQL запрос
+        sql_query = await sql_generator.generate_sql(
+            natural_language_query=natural_language_query,
+            rag_system=rag_system
+        )
+        
+        # Выполняем запрос с логикой повторных попыток
+        result = await db_manager.execute_with_retry(
+            sql_query=sql_query,
+            natural_language_query=natural_language_query,
+            sql_generator=sql_generator,
+            rag_system=rag_system
+        )
+        
+        # Сохраняем результат
+        await save_query_result(natural_language_query, sql_query, result)
+        
+        return {
+            "status": "success",
+            "sql_query": sql_query,
+            "result": result
+        }
+        
+    except Exception as e:
+        logger.error(f"Query processing failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка обработки запроса: {str(e)}")
+
+async def save_query_result(query: str, sql: str, result: Dict[str, Any]):
+    """Сохранение результата запроса в JSON файл"""
+    try:
+        result_entry = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "query": query,
+            "sql_query": sql,
+            "status": result.get("status", "unknown"),
+            "data": result.get("data", []),
+            "error": result.get("error", None),
+            "attempts": result.get("attempts", [])
+        }
+        
+        json_file_path = "query_results.json"
+        
+        # Загружаем существующие результаты
+        if os.path.exists(json_file_path):
+            with open(json_file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if not isinstance(data, list):
+                    data = []
+        else:
+            data = []
+        
+        # Добавляем новый результат
+        data.append(result_entry)
+        
+        # Сохраняем обновленный файл
+        with open(json_file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4, cls=DecimalEncoder)
+            
+        logger.info(f"Query result saved to {json_file_path}")
+        
+    except Exception as e:
+        logger.error(f"Failed to save query result: {e}")
+
+@app.get("/status")
+async def get_status():
+    """Получение статуса приложения"""
+    return {
+        "app_state": app_state,
+        "rag_status": rag_system.get_status(),
+        "database_status": await db_manager.get_status()
     }
 
-    response = requests.post(api_url, json=payload, timeout=10)
-    response.raise_for_status()  # Проверяем статус ответа
-    return {"status": "success", "api_response": response.json()}
-
-@app.route("/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        try:
-            # Handle schema upload
-            if "schema_file" in request.files:
-                schema_file = request.files["schema_file"]
-                if schema_file.filename.endswith(".json"):
-                    global db_schema
-                    db_schema = json.load(schema_file)
-                    return jsonify({"status": "Schema uploaded successfully"})
-                else:
-                    return jsonify({"error": "Please upload a JSON file"}), 400
-
-            # Handle text-to-SQL query
-            if "query" in request.form:
-                natural_language_query = request.form["query"]
-                if not db_schema:
-                    return jsonify({"error": "No schema uploaded"}), 400
-                sql_query = generate_sql_query(natural_language_query, db_schema)
-                # Отправляем SQL-запрос на API
-                try:
-                    api_result = send_sql_to_api(sql_query)
-                except Exception as e:
-                    api_result = {"status": "error", "error": f"API request failed after retries: {str(e)}"}
-                # Возвращаем SQL и результат API
-                response = {
-                    "sql_query": sql_query,
-                    "api_result": api_result
-                }
-                return jsonify(response)
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-    return render_template("index.html")
+@app.get("/health")
+async def health_check():
+    """Проверка здоровья приложения"""
+    try:
+        db_status = await db_manager.get_status()
+        return {
+            "status": "healthy",
+            "database": db_status["connected"],
+            "rag_system": rag_system.get_status()["ready"]
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000)
