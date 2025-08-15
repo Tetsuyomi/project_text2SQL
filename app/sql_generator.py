@@ -112,6 +112,22 @@ class SQLGenerator:
         sql_text = re.sub(r'\bDELETE\s+FROM\s+count_accident\b', 'DELETE FROM accidents', sql_text, flags=re.IGNORECASE)
         sql_text = re.sub(r'\bINSERT\s+INTO\s+count_accident\b', 'INSERT INTO accidents', sql_text, flags=re.IGNORECASE)
         
+        # Исправляем двойную квалификацию (table.table.column)
+        sql_text = re.sub(r'\b(\w+)\.(\w+)\.(\w+)\b', r'\1.\3', sql_text)
+        
+        # Исправляем неправильные имена столбцов
+        sql_text = re.sub(r'\bdriver_experience\b', 'driving_experience', sql_text, flags=re.IGNORECASE)
+        sql_text = re.sub(r'\b(\w+)\.accidents\b', r'\1.accident_number', sql_text, flags=re.IGNORECASE)
+        sql_text = re.sub(r'\b(\w+)\.cars\b', r'\1.car_number', sql_text, flags=re.IGNORECASE)
+        
+        # Исправляем неправильные JOIN между accidents и concentrations
+        sql_text = re.sub(r'\baccidents\s+(\w+)\s+ON\s+\1\.accident_number\s*=\s*(\w+)\.accident_number\b', 
+                         r'accidents \1 ON \1.accident_number = \2.accident_number', sql_text, flags=re.IGNORECASE)
+        
+        # Исправляем неправильные агрегации
+        sql_text = re.sub(r'\bSUM\s*\(\s*(\w+)\.concentrations\.count_accident\s*\)', r'SUM(\1.count_accident)', sql_text, flags=re.IGNORECASE)
+        sql_text = re.sub(r'\bSUM\s*\(\s*(\w+)\.(\w+)\.(\w+)\s*\)', r'SUM(\1.\3)', sql_text, flags=re.IGNORECASE)
+        
         return sql_text
     
     async def generate_sql(self, natural_language_query: str, rag_system, previous_sql: Optional[str] = None, previous_error: Optional[str] = None, attempt: Optional[int] = None) -> str:
@@ -196,6 +212,13 @@ class SQLGenerator:
         Если нужна таблица с данными об участниках - используй 'participants'.
         Если нужна таблица с концентрациями ДТП - используй 'concentrations'.
 
+        ПРАВИЛА ДЛЯ АНАЛИЗА:
+        - Для данных о ДТП (смерти, ранения, количество) - нужна таблица 'accidents'
+        - Для данных о машинах (цвет, марка, модель) - нужна таблица 'cars'
+        - Для данных об участниках (опыт вождения, пол, возраст) - нужна таблица 'participants'
+        - Для данных о концентрациях ДТП - нужна таблица 'concentrations'
+        - Для связей между таблицами учитывай: cars.accident_number = accidents.accident_number, participants.car_number = cars.car_number
+
         Проанализируй запрос и верни ТОЛЬКО JSON в следующем формате:
         {{
             "required_tables": ["список", "нужных", "таблиц"],
@@ -207,6 +230,8 @@ class SQLGenerator:
         - Включай только те столбцы, которые нужны для SELECT, WHERE, GROUP BY, ORDER BY
         - Не включай технические столбцы типа id, created_at, updated_at, если они не нужны
         - Учитывай связи между таблицами для JOIN
+        - Для подсчета ДТП включай 'accident_number' из таблицы 'accidents'
+        - Для подсчета смертей включай 'died' из таблицы 'accidents'
         """
         
         if previous_sql and previous_error:
@@ -307,8 +332,22 @@ class SQLGenerator:
         КРИТИЧЕСКИ ВАЖНО: 'count_accident' - это КОЛОНКА в таблице 'concentrations', а НЕ отдельная таблица.
         НЕ используй 'count_accident' в FROM или JOIN - это НЕ таблица!
         
-        Для JOIN используй только существующие связи между таблицами.
-        При необходимости используй агрегаты вида COUNT(DISTINCT a.accident_number), SUM(a.died), COALESCE(.../NULLIF(...,0)::float,0).
+        ПРАВИЛА ДЛЯ JOIN:
+        - cars.accident_number = accidents.accident_number
+        - participants.car_number = cars.car_number
+        - concentrations.concentration_number связан с accidents через таблицу concentrations_to_accidents_relationship
+        - НЕ используй прямой JOIN между accidents и concentrations по accident_number
+        
+        ПРАВИЛА ДЛЯ АГРЕГАЦИИ:
+        - Для подсчета ДТП используй COUNT(DISTINCT a.accident_number)
+        - Для суммирования смертей используй SUM(a.died)
+        - Для count_accident из concentrations используй SUM(c.count_accident)
+        - НЕ используй двойную квалификацию типа table.table.column
+        
+        ПРАВИЛА ДЛЯ СТОЛБЦОВ:
+        - В participants используй 'driving_experience' (НЕ 'driver_experience')
+        - В accidents используй 'accident_number' (НЕ 'accidents')
+        - В cars используй 'car_number' (НЕ 'cars')
         
         В ответе должен быть только SQL-запрос без дополнительных комментариев.
         Не используй Markdown-разметку и не обрамляй ответ в ``` или теги языка.
@@ -386,6 +425,9 @@ class SQLGenerator:
         prompt += "\nКРИТИЧЕСКИ ВАЖНО: 'count_accident' - это КОЛОНКА в таблице 'concentrations', а НЕ отдельная таблица."
         prompt += "\nНЕ используй 'count_accident' в FROM или JOIN - это НЕ таблица!"
         prompt += "\nДля данных о ДТП используй таблицу 'accidents'."
+        prompt += "\nПРАВИЛА ДЛЯ JOIN: cars.accident_number = accidents.accident_number, participants.car_number = cars.car_number"
+        prompt += "\nПРАВИЛА ДЛЯ СТОЛБЦОВ: используй 'driving_experience' (НЕ 'driver_experience'), 'accident_number' (НЕ 'accidents')"
+        prompt += "\nПРАВИЛА ДЛЯ АГРЕГАЦИИ: НЕ используй двойную квалификацию типа table.table.column"
 
         response = self.client.chat.completions.create(
             model="gpt-4.1-nano",
